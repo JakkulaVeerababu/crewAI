@@ -43,7 +43,8 @@ def test_corrupt_settings_file_recovers_on_dump(
 ) -> None:
     """A corrupt settings.json is logged and overwritten on dump rather than silently failing."""
     config_path = tmp_path / "settings.json"
-    config_path.write_text('{"org_name": "acme", "org_uuid": "123",}')
+    corrupt_content = '{"org_name": "acme", "org_uuid": "123",}'
+    config_path.write_text(corrupt_content)
 
     settings = settings_module.Settings(config_path=config_path)
     assert settings.org_name is None
@@ -52,12 +53,41 @@ def test_corrupt_settings_file_recovers_on_dump(
     settings.org_name = "recovered-org"
     settings.dump()
 
+    # Original content is backed up
+    bak_path = config_path.with_suffix(".json.bak")
+    assert bak_path.exists()
+    assert bak_path.read_text() == corrupt_content
+
     data = json.loads(config_path.read_text())
     assert data["org_name"] == "recovered-org"
 
     # Verify reloading gets the recovered settings
     reloaded = settings_module.Settings(config_path=config_path)
     assert reloaded.org_name == "recovered-org"
+
+
+def test_non_dict_json_settings_file_recovers_on_dump(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A settings.json containing valid JSON but not a dict (e.g. list) does not crash and recovers."""
+    config_path = tmp_path / "settings.json"
+    list_content = '["unexpected", "list", "root"]'
+    config_path.write_text(list_content)
+
+    # Initializing settings must not crash with TypeError
+    settings = settings_module.Settings(config_path=config_path)
+    assert settings.org_name is None
+    assert "does not contain a JSON object" in caplog.text
+
+    settings.org_name = "recovered-from-list"
+    settings.dump()
+
+    bak_path = config_path.with_suffix(".json.bak")
+    assert bak_path.exists()
+    assert bak_path.read_text() == list_content
+
+    data = json.loads(config_path.read_text())
+    assert data["org_name"] == "recovered-from-list"
 
 
 def test_corrupt_settings_file_recovers_on_reset(
